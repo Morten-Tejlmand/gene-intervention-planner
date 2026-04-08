@@ -215,3 +215,4 @@ reports/*
 !reports/.gitkeep
 artifacts/*
 configs/*
+data/*
