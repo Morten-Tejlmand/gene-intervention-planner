@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gene-intervention-planner"
+version = "0.1.0"
+description = "Active-learning baseline for ranking genome experiment candidates."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "biopython>=1.86",
+    "ipykernel>=7.2.0",
+    "networkx>=3.6.1",
+    "numpy>=2.2.0",
+    "pandas>=3.0.1",
+    "polars>=1.39.2",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.5",
+    "matplotlib>=3.10.0",
+    "scikit-learn>=1.8.0",
+    "typer>=0.16.0",
+]
+
+[project.scripts]
+gene-planner = "gene_intervention_planner.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gene_intervention_planner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
