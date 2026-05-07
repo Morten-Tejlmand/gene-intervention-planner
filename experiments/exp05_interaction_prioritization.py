@@ -45,7 +45,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 # -- Configuration -------------------------------------------------------------
-DATA_PATH = Path("data/processed/enriched_genomic_features.csv")
+DATA_PATH = Path("data/processed/enriched_v2_features.csv")
 RESULTS_DIR = Path("artifacts/exp05_interaction_prioritization")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -67,26 +67,67 @@ SYNAPTIC_ANCHOR_IDS = {
 }
 
 NEURAL_GENE_IDS: dict[str, str] = {
-    "WBGene00003734": "nlg-1",
-    "WBGene00003816": "nrx-1",
-    "WBGene00006745": "unc-13",
-    "WBGene00004354": "ric-4",
-    "WBGene00004944": "snb-1",
-    "WBGene00001183": "eat-4",
-    "WBGene00001617": "glr-1",
-    "WBGene00003681": "nmr-1",
-    "WBGene00000491": "cha-1",
-    "WBGene00003152": "mec-4",
-    "WBGene00006261": "tax-4",
-    "WBGene00006259": "tax-2",
-    "WBGene00001445": "flp-1",
+    # Synaptic adhesion / scaffolding
+    "WBGene00003734": "nlg-1",   "WBGene00003816": "nrx-1",
     "WBGene00019756": "shn-1",
+    # Vesicle priming / fusion / release
+    "WBGene00006745": "unc-13",  "WBGene00004354": "ric-4",
+    "WBGene00004944": "snb-1",   "WBGene00006757": "unc-18",
+    "WBGene00006798": "unc-64",  "WBGene00006364": "syd-2",
+    "WBGene00000086": "aex-3",   "WBGene00006767": "unc-31",
+    # Cholinergic
+    "WBGene00000491": "cha-1",   "WBGene00006756": "unc-17",
+    "WBGene00000501": "cho-1",   "WBGene00006765": "unc-29",
+    "WBGene00002974": "lev-1",   "WBGene00000042": "acr-2",
+    "WBGene00000043": "acr-3",
+    # GABAergic
+    "WBGene00006762": "unc-25",  "WBGene00006783": "unc-47",
+    "WBGene00006784": "unc-49",  "WBGene00001373": "exp-1",
+    "WBGene00012915": "lgc-35",
+    # Glutamatergic
+    "WBGene00001183": "eat-4",   "WBGene00001617": "glr-1",
+    "WBGene00003681": "nmr-1",   "WBGene00001613": "glr-2",
+    "WBGene00001615": "glr-4",   "WBGene00001616": "glr-5",
+    # Dopaminergic
+    "WBGene00000296": "cat-2",   "WBGene00000934": "dat-1",
+    "WBGene00001052": "dop-1",   "WBGene00001053": "dop-2",
+    "WBGene00020506": "dop-3",   "WBGene00000295": "cat-1",
+    # Serotonergic
+    "WBGene00006600": "tph-1",   "WBGene00003387": "mod-5",
+    "WBGene00004776": "ser-1",   "WBGene00004779": "ser-4",
+    "WBGene00004780": "ser-7",
+    # Mechanosensory / sensory
+    "WBGene00003152": "mec-4",   "WBGene00003174": "mec-10",
+    "WBGene00003166": "mec-2",   "WBGene00003167": "mec-3",
+    "WBGene00003170": "mec-6",   "WBGene00003889": "osm-9",
+    "WBGene00003839": "ocr-2",   "WBGene00006616": "trp-4",
+    "WBGene00006261": "tax-4",   "WBGene00006259": "tax-2",
+    "WBGene00006527": "tax-6",
+    # Neuropeptide
+    "WBGene00001445": "flp-1",   "WBGene00001172": "egl-3",
+    "WBGene00001189": "egl-21",
+    # Axon development
+    "WBGene00004457": "rpm-1",   "WBGene00001008": "dlk-1",
+    # Neural transcription factors
+    "WBGene00006818": "unc-86",  "WBGene00006654": "ttx-3",
+    "WBGene00000435": "ceh-10",
+    # Other neural
+    "WBGene00000149": "apl-1",
 }
 
 FEATURE_COLS_BIOPHYS = [
     "length", "molecular_weight", "aromaticity", "instability_index",
     "isoelectric_point", "gravy", "helix_fraction", "turn_fraction", "sheet_fraction",
     "human_alignment_score",
+]
+
+FUNCTIONAL_FEATURES = [
+    "annot_count", "unique_pheno_count", "positive_annot_count",
+    "positive_annot_rate", "mean_evidence_weight", "has_annotation",
+    "reference_count", "neural_pheno_overlap",
+    "feature_ortholog_count", "feature_human_ortholog_count",
+    "feature_max_query_identity", "vertebrate_ortholog_count",
+    "ortholog_species_count",
 ]
 
 
@@ -98,7 +139,7 @@ def load_and_train() -> tuple[pd.DataFrame, RandomForestClassifier, list[str]]:
     df["is_neural"] = df["common_name"].isin(NEURAL_GENE_IDS).astype(int)
 
     aa_cols = sorted(c for c in df.columns if c.startswith("percent_"))
-    feat_cols = [c for c in FEATURE_COLS_BIOPHYS + aa_cols if c in df.columns]
+    feat_cols = [c for c in FEATURE_COLS_BIOPHYS + aa_cols + FUNCTIONAL_FEATURES if c in df.columns]
 
     agg = {c: "mean" for c in feat_cols}
     agg["is_neural"] = "max"

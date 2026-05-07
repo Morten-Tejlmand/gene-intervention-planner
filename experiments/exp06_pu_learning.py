@@ -1,29 +1,30 @@
 """
-Experiment 3: Active Learning vs Random Selection
-===================================================
-Core question: Does model-guided gene selection beat random under a limited
-experiment budget?
+Experiment 6: Positive-Unlabeled (PU) Learning
+================================================
+Problem framing: We have 14 *confirmed* neural genes (positives) and ~28k
+*unlabeled* genes — not confirmed negatives, just untested.  Standard
+RandomForest treats every unlabeled gene as a true negative, which biases
+the decision boundary against low-frequency positives.
 
-Simulation protocol:
-  - Pool:    all genes, with 12 known neural genes as the "oracle truth"
-  - Seed:    8 neural genes + 40 random negatives (labeled at start)
-  - Test:    4 held-out neural genes + 200 random negatives (never queried)
-  - Rounds:  20  |  Queries per round: 15
-  - Trials:  10 independent random seeds for error bars
+PU Bagging (Mordelet & Vert, 2014):
+  Train n_bags classifiers, each on:
+    * ALL positive examples
+    * A random subsample of unlabeled examples (treated as negatives per bag)
+  Average predicted P(neural=1) across bags.
+  Because each bag sees a different random negative set, the ensemble learns
+  to distinguish positives from *typical* unlabeled genes rather than memorising
+  specific confirmed-negative examples.
 
-Acquisition functions compared:
-  random       — select uniformly at random from the unlabeled pool
-  uncertainty  — margin sampling: select genes where model is least certain
-                 score = 1 - |P(positive) - P(negative)|
-  qbc          — query-by-committee (3× LR with C=0.1/1/10):
-                 select genes with highest prediction variance across the committee
+Strategies compared (both use uncertainty-sampling acquisition):
+  standard_rf  — single RandomForest, class_weight="balanced"
+  pu_bagging   — PU Bagging with RF base estimators
 
-Metrics:
-  AUROC on fixed test set after each round
-  Cumulative neural-gene recall in top-K of model ranking
+Metrics per round (10 trials):
+  AUROC on fixed held-out test set
+  Neural-gene recall in top-50 model predictions on the unlabeled pool
 
 Run from project root:
-    python experiments/exp03_al_vs_random.py
+    python experiments/exp06_pu_learning.py
 """
 from __future__ import annotations
 
@@ -39,24 +40,30 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 # -- Configuration -------------------------------------------------------------
 DATA_PATH = Path("data/processed/enriched_v2_features.csv")
-RESULTS_DIR = Path("artifacts/exp03_al_vs_random")
+RESULTS_DIR = Path("artifacts/exp06_pu_learning")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 N_ROUNDS = 20
 QUERY_SIZE = 15
-N_SEED_POSITIVES = 8     # neural genes revealed at start
-N_SEED_NEGATIVES = 40    # non-neural genes revealed at start
-N_TEST_POSITIVES = 4     # held-out neural genes for evaluation
-N_TEST_NEGATIVES = 200   # held-out non-neural genes for evaluation
+N_SEED_POSITIVES = 8
+N_SEED_NEGATIVES = 40
+N_TEST_POSITIVES = 4
+N_TEST_NEGATIVES = 200
 N_TRIALS = 10
-TOP_K = 50               # for recall-in-top-K metric
+TOP_K = 50
 RANDOM_STATE = 42
+
+# PU Bagging: number of bags and how many unlabeled to sample per bag.
+# Sampling ~20x positives per bag keeps each bag balanced enough to learn
+# while still seeing diverse negatives across bags.
+PU_N_BAGS = 15
+PU_NEG_RATIO = 20  # unlabeled sampled per bag = n_positives * PU_NEG_RATIO
 
 NEURAL_GENE_IDS: dict[str, str] = {
     # Synaptic adhesion / scaffolding
@@ -123,11 +130,60 @@ FUNCTIONAL_FEATURES = [
 ]
 
 
+# -- PU Bagging ----------------------------------------------------------------
+
+class PUBaggingClassifier:
+    """
+    Positive-Unlabeled bagging (Mordelet & Vert 2014).
+
+    Each bag trains an RF on all labeled positives plus a random subsample of
+    unlabeled examples (y=0).  Final probabilities are averaged across bags,
+    which smooths out the artefacts introduced by treating random unlabeled
+    subsets as negatives.
+    """
+
+    def __init__(
+        self,
+        n_bags: int = PU_N_BAGS,
+        neg_ratio: int = PU_NEG_RATIO,
+        random_state: int = RANDOM_STATE,
+    ) -> None:
+        self.n_bags = n_bags
+        self.neg_ratio = neg_ratio
+        self.random_state = random_state
+        self.estimators_: list[RandomForestClassifier] = []
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "PUBaggingClassifier":
+        rng = np.random.default_rng(self.random_state)
+        pos_idx = np.where(y == 1)[0]
+        neg_idx = np.where(y == 0)[0]
+        n_sample = min(len(pos_idx) * self.neg_ratio, len(neg_idx))
+
+        self.estimators_ = []
+        for i in range(self.n_bags):
+            bag_neg = rng.choice(neg_idx, size=n_sample, replace=False)
+            bag_idx = np.concatenate([pos_idx, bag_neg])
+            clf = RandomForestClassifier(
+                n_estimators=50,
+                class_weight="balanced",
+                random_state=int(self.random_state + i),
+                n_jobs=-1,
+            )
+            clf.fit(X[bag_idx], y[bag_idx])
+            self.estimators_.append(clf)
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        avg = np.mean(
+            [e.predict_proba(X)[:, 1] for e in self.estimators_], axis=0
+        )
+        return np.column_stack([1.0 - avg, avg])
+
+
 # -- Data ----------------------------------------------------------------------
 
-def load_data() -> pd.DataFrame:
+def load_data() -> tuple[pd.DataFrame, list[str]]:
     df = pd.read_csv(DATA_PATH)
-    # Match on both WBGene IDs (keys) and gene symbols (values)
     neural_ids = set(NEURAL_GENE_IDS.keys()) | set(NEURAL_GENE_IDS.values())
     df["is_neural"] = df["common_name"].isin(neural_ids).astype(int)
 
@@ -137,102 +193,59 @@ def load_data() -> pd.DataFrame:
     agg = {c: "mean" for c in feat_cols}
     agg["is_neural"] = "max"
     gene_df = df.groupby("common_name").agg(agg).reset_index()
-    gene_df["_feat_cols"] = None  # store col list separately
-    gene_df.attrs["feat_cols"] = feat_cols
-    return gene_df
+    return gene_df, feat_cols
 
 
-# -- Model ---------------------------------------------------------------------
-
-def make_model() -> LogisticRegression:
-    return LogisticRegression(
-        C=1.0, max_iter=2000, class_weight="balanced",
-        random_state=RANDOM_STATE,
-    )
-
-
-# -- Acquisition Functions -----------------------------------------------------
+# -- Acquisition (shared) ------------------------------------------------------
 
 def acquire_random(pool_idx: np.ndarray, *, k: int, rng: np.random.Generator) -> np.ndarray:
     return rng.choice(pool_idx, size=min(k, len(pool_idx)), replace=False)
 
 
-def acquire_uncertainty(
-    pool_idx: np.ndarray,
-    model,
-    X: np.ndarray,
-    *,
-    k: int,
-) -> np.ndarray:
+def acquire_uncertainty(pool_idx: np.ndarray, model, X: np.ndarray, *, k: int) -> np.ndarray:
     proba = model.predict_proba(X[pool_idx])
     if proba.shape[1] == 2:
         margin = np.abs(proba[:, 1] - proba[:, 0])
     else:
-        sorted_proba = np.sort(proba, axis=1)
-        margin = sorted_proba[:, -1] - sorted_proba[:, -2]
-    top = np.argsort(margin)[:k]
-    return pool_idx[top]
-
-
-def make_committee() -> list:
-    # Three LR with different regularization strengths for diverse predictions
-    return [
-        LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced",
-                           random_state=RANDOM_STATE),
-        LogisticRegression(C=0.1, max_iter=2000, class_weight="balanced",
-                           random_state=RANDOM_STATE),
-        LogisticRegression(C=10.0, max_iter=2000, class_weight="balanced",
-                           random_state=RANDOM_STATE),
-    ]
-
-
-def acquire_qbc(
-    pool_idx: np.ndarray,
-    committee: list,
-    X: np.ndarray,
-    *,
-    k: int,
-) -> np.ndarray:
-    """Select genes where committee members disagree most (variance of P(neural=1))."""
-    probas = np.stack(
-        [m.predict_proba(X[pool_idx])[:, -1] for m in committee], axis=1
-    )
-    disagreement = probas.var(axis=1)
-    top = np.argsort(disagreement)[::-1][:k]
-    return pool_idx[top]
+        s = np.sort(proba, axis=1)
+        margin = s[:, -1] - s[:, -2]
+    return pool_idx[np.argsort(margin)[:k]]
 
 
 # -- Simulation ----------------------------------------------------------------
 
+def _make_model(model_type: str):
+    if model_type == "pu_bagging":
+        return PUBaggingClassifier()
+    return RandomForestClassifier(
+        n_estimators=200, class_weight="balanced",
+        random_state=RANDOM_STATE, n_jobs=-1,
+    )
+
+
 def run_trial(
     gene_df: pd.DataFrame,
     feat_cols: list[str],
-    strategy: str,
+    model_type: str,
     rng: np.random.Generator,
 ) -> dict[str, list[float]]:
-    """Run one AL trial; return AUROC and recall-in-top-K per round."""
-    all_idx = np.arange(len(gene_df))
     y = gene_df["is_neural"].values
-    X_raw = gene_df[feat_cols].fillna(0.0).values
-
-    # Normalize once
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X_raw)
+    X = StandardScaler().fit_transform(gene_df[feat_cols].fillna(0.0).values)
 
     pos_idx = np.where(y == 1)[0]
     neg_idx = np.where(y == 0)[0]
 
     if len(pos_idx) < N_SEED_POSITIVES + N_TEST_POSITIVES:
         raise ValueError(
-            f"Not enough positives: need {N_SEED_POSITIVES + N_TEST_POSITIVES}, got {len(pos_idx)}"
+            f"Not enough positives: need {N_SEED_POSITIVES + N_TEST_POSITIVES}, "
+            f"got {len(pos_idx)}"
         )
 
-    # Split positives into seed / test
     rng.shuffle(pos_idx)
     seed_pos = pos_idx[:N_SEED_POSITIVES]
     test_pos = pos_idx[N_SEED_POSITIVES: N_SEED_POSITIVES + N_TEST_POSITIVES]
+    hidden_pos = pos_idx[N_SEED_POSITIVES + N_TEST_POSITIVES:]
 
-    # Split negatives into seed / test / pool
     rng.shuffle(neg_idx)
     seed_neg = neg_idx[:N_SEED_NEGATIVES]
     test_neg = neg_idx[N_SEED_NEGATIVES: N_SEED_NEGATIVES + N_TEST_NEGATIVES]
@@ -240,10 +253,7 @@ def run_trial(
 
     test_idx = np.concatenate([test_pos, test_neg])
     labeled_idx = np.concatenate([seed_pos, seed_neg])
-    pool_idx = np.concatenate([pool_neg])  # remaining negatives; positives enter via oracle
-
-    # Positives not yet revealed (oracle will reveal them when selected, or they stay hidden)
-    hidden_pos = pos_idx[N_SEED_POSITIVES + N_TEST_POSITIVES:]
+    pool_idx = pool_neg.copy()
 
     auroc_curve: list[float] = []
     recall_curve: list[float] = []
@@ -251,19 +261,10 @@ def run_trial(
     for _round in range(N_ROUNDS + 1):
         has_both = len(np.unique(y[labeled_idx])) >= 2
 
-        # Train model(s)
-        model = make_model()
-        committee: list | None = None
+        model = _make_model(model_type)
         if has_both:
-            if strategy == "qbc":
-                committee = make_committee()
-                for m in committee:
-                    m.fit(X[labeled_idx], y[labeled_idx])
-                model = committee[0]  # LR (C=1) used for AUROC eval
-            else:
-                model.fit(X[labeled_idx], y[labeled_idx])
+            model.fit(X[labeled_idx], y[labeled_idx])
 
-        # Eval
         if not has_both:
             auroc_curve.append(0.5)
             recall_curve.append(0.0)
@@ -275,21 +276,19 @@ def run_trial(
             if len(unlab_idx) > 0:
                 scores = model.predict_proba(X[unlab_idx])[:, -1]
                 top_k = np.argsort(scores)[::-1][: min(TOP_K, len(unlab_idx))]
-                n_pos_found = int(y[unlab_idx[top_k]].sum())
-                recall_curve.append(n_pos_found / max(1, len(hidden_pos) + N_TEST_POSITIVES - len(test_pos)))
+                n_found = int(y[unlab_idx[top_k]].sum())
+                denom = max(1, len(hidden_pos) + N_TEST_POSITIVES - len(test_pos))
+                recall_curve.append(n_found / denom)
             else:
                 recall_curve.append(0.0)
 
         if _round == N_ROUNDS:
             break
 
-        # Acquire
-        if not has_both or strategy == "random":
+        if not has_both:
             chosen = acquire_random(pool_idx, k=QUERY_SIZE, rng=rng)
-        elif strategy == "uncertainty":
+        else:
             chosen = acquire_uncertainty(pool_idx, model, X, k=QUERY_SIZE)
-        else:  # qbc
-            chosen = acquire_qbc(pool_idx, committee, X, k=QUERY_SIZE)
 
         labeled_idx = np.concatenate([labeled_idx, chosen])
         pool_idx = np.setdiff1d(pool_idx, chosen)
@@ -297,12 +296,12 @@ def run_trial(
     return {"auroc": auroc_curve, "recall_top_k": recall_curve}
 
 
-def run_strategy(gene_df: pd.DataFrame, feat_cols: list[str], strategy: str) -> dict:
-    print(f"  [{strategy}] running {N_TRIALS} trials ...")
+def run_model_type(gene_df: pd.DataFrame, feat_cols: list[str], model_type: str) -> dict:
+    print(f"  [{model_type}] {N_TRIALS} trials ...")
     all_auroc, all_recall = [], []
     for t in range(N_TRIALS):
         rng = np.random.default_rng(RANDOM_STATE + t)
-        trial = run_trial(gene_df, feat_cols, strategy, rng)
+        trial = run_trial(gene_df, feat_cols, model_type, rng)
         all_auroc.append(trial["auroc"])
         all_recall.append(trial["recall_top_k"])
 
@@ -321,25 +320,25 @@ def run_strategy(gene_df: pd.DataFrame, feat_cols: list[str], strategy: str) -> 
 def plot_curves(results: dict[str, dict]) -> None:
     rounds = np.arange(N_ROUNDS + 1)
     labeled_counts = (N_SEED_POSITIVES + N_SEED_NEGATIVES) + rounds * QUERY_SIZE
-    colors = {"random": "gray", "uncertainty": "steelblue", "qbc": "darkorange"}
+    colors = {"standard_rf": "steelblue", "pu_bagging": "seagreen"}
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(
-        f"Exp 3 — Active Learning vs Random  "
-        f"({N_TRIALS} trials, query={QUERY_SIZE}/round)",
+        f"Exp 6 — PU Bagging vs Standard RF  "
+        f"({N_TRIALS} trials, {PU_N_BAGS} bags, neg_ratio={PU_NEG_RATIO}x)",
         fontsize=12, fontweight="bold",
     )
 
-    for strategy, res in results.items():
-        c = colors.get(strategy, "orange")
-        axes[0].plot(labeled_counts, res["auroc_mean"], label=strategy, color=c, lw=2)
+    for mtype, res in results.items():
+        c = colors.get(mtype, "orange")
+        axes[0].plot(labeled_counts, res["auroc_mean"], label=mtype, color=c, lw=2)
         axes[0].fill_between(
             labeled_counts,
             res["auroc_mean"] - res["auroc_std"],
             res["auroc_mean"] + res["auroc_std"],
             alpha=0.2, color=c,
         )
-        axes[1].plot(labeled_counts, res["recall_mean"], label=strategy, color=c, lw=2)
+        axes[1].plot(labeled_counts, res["recall_mean"], label=mtype, color=c, lw=2)
         axes[1].fill_between(
             labeled_counts,
             res["recall_mean"] - res["recall_std"],
@@ -359,7 +358,7 @@ def plot_curves(results: dict[str, dict]) -> None:
     axes[1].legend()
 
     plt.tight_layout()
-    out = RESULTS_DIR / "exp03_learning_curves.png"
+    out = RESULTS_DIR / "exp06_pu_vs_standard.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"  Plot -> {out}")
     plt.close()
@@ -369,44 +368,40 @@ def plot_curves(results: dict[str, dict]) -> None:
 
 def main() -> None:
     print("=" * 60)
-    print("Experiment 3: Active Learning vs Random Selection")
+    print("Experiment 6: PU Bagging vs Standard RF")
     print("=" * 60)
-    print(f"  Rounds={N_ROUNDS}  Query={QUERY_SIZE}/round  Trials={N_TRIALS}")
+    print(f"  PU bags={PU_N_BAGS}  neg_ratio={PU_NEG_RATIO}x  Rounds={N_ROUNDS}  Trials={N_TRIALS}")
 
     print(f"\nLoading {DATA_PATH} ...")
-    gene_df = load_data()
-    feat_cols = gene_df.attrs["feat_cols"]
-    del gene_df["_feat_cols"]
+    gene_df, feat_cols = load_data()
     n_pos = int(gene_df["is_neural"].sum())
     print(f"  Genes: {len(gene_df):,}  |  Neural-relevant: {n_pos}")
 
     if n_pos < N_SEED_POSITIVES + N_TEST_POSITIVES:
         sys.exit(
-            f"ERROR: Need at least {N_SEED_POSITIVES + N_TEST_POSITIVES} positive genes, "
-            f"found {n_pos}. Reduce N_SEED_POSITIVES or N_TEST_POSITIVES."
+            f"ERROR: Need {N_SEED_POSITIVES + N_TEST_POSITIVES} positives, found {n_pos}."
         )
 
     results: dict[str, dict] = {}
-    for strategy in ("random", "uncertainty", "qbc"):
-        results[strategy] = run_strategy(gene_df, feat_cols, strategy)
+    for mtype in ("standard_rf", "pu_bagging"):
+        results[mtype] = run_model_type(gene_df, feat_cols, mtype)
 
-    # Save summary
     summary_rows = []
-    for strategy, res in results.items():
+    for mtype, res in results.items():
         summary_rows.append({
-            "strategy": strategy,
+            "model": mtype,
             "final_auroc_mean": res["auroc_mean"][-1],
             "final_auroc_std": res["auroc_std"][-1],
             "final_recall_mean": res["recall_mean"][-1],
             "final_recall_std": res["recall_std"][-1],
             "auc_learning_curve": float(np.trapezoid(res["auroc_mean"])),
         })
+        pd.DataFrame({k: v for k, v in res.items() if isinstance(v, np.ndarray)}).to_csv(
+            RESULTS_DIR / f"curves_{mtype}.csv", index=False
+        )
+
     summary = pd.DataFrame(summary_rows)
     summary.to_csv(RESULTS_DIR / "summary.csv", index=False)
-
-    # Save full curves
-    for strategy, res in results.items():
-        pd.DataFrame(res).to_csv(RESULTS_DIR / f"curves_{strategy}.csv", index=False)
 
     print("\nSaving plots ...")
     plot_curves(results)
