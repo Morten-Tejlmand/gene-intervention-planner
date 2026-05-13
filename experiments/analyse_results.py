@@ -57,7 +57,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     section("Exp 03  Active Learning vs Random (LR, 20 rounds × 15 queries, 10 trials)")
     e3 = pd.read_csv(ARTIFACTS / "exp03_al_vs_random/summary.csv")
-    cols3 = ["strategy", "final_auroc_mean", "final_auroc_std", "final_recall_mean", "final_recall_std"]
+    cols3 = ["strategy", "final_ap_mean", "final_ap_std", "final_recall_mean", "final_recall_std"]
     print(fmt(e3[[c for c in cols3 if c in e3.columns]]))
     best3 = e3.loc[e3["final_recall_mean"].idxmax()]
     rand3 = e3[e3["strategy"] == "random"].iloc[0]
@@ -70,11 +70,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     section("Exp 04  Acquisition Strategy Comparison (LR, 20 rounds × 15 queries, 10 trials)")
     e4 = pd.read_csv(ARTIFACTS / "exp04_hybrid_acquisition/summary.csv")
-    cols4 = ["strategy", "final_auroc", "final_auroc_std", "final_recall", "auc_learning_curve"]
+    cols4 = ["strategy", "final_ap", "final_ap_std", "final_recall", "auc_ap_curve"]
     print(fmt(e4[[c for c in cols4 if c in e4.columns]]))
     best4 = e4.loc[e4["final_recall"].idxmax()]
     print(f"\n  Best recall: {best4['strategy']}  recall={best4['final_recall']:.3f}  "
-          f"AUROC={best4['final_auroc']:.3f}")
+          f"AP={best4['final_ap']:.3f}")
 
     # ------------------------------------------------------------------
     # Exp 05 — Pair prioritization vs random
@@ -92,11 +92,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     section("Exp 06  PU Bagging vs Standard RF (10 trials)")
     e6 = pd.read_csv(ARTIFACTS / "exp06_pu_learning/summary.csv")
-    cols6 = ["model", "final_auroc_mean", "final_auroc_std", "final_recall_mean", "final_recall_std"]
+    cols6 = ["model", "final_ap_mean", "final_ap_std", "final_recall_mean", "final_recall_std"]
     print(fmt(e6[[c for c in cols6 if c in e6.columns]]))
     pu = e6[e6["model"] == "pu_bagging"].iloc[0]
     rf = e6[e6["model"] == "standard_rf"].iloc[0]
-    print(f"\n  PU Bagging vs RF: AUROC +{pu['final_auroc_mean'] - rf['final_auroc_mean']:.3f}  "
+    print(f"\n  PU Bagging vs RF: AP +{pu['final_ap_mean'] - rf['final_ap_mean']:.3f}  "
           f"recall +{pu['final_recall_mean'] - rf['final_recall_mean']:.3f}")
 
     # ------------------------------------------------------------------
@@ -109,7 +109,7 @@ def main() -> None:
         ("Exp03 uncertainty",    "Final recall@budget",    f"{e3.loc[e3['final_recall_mean'].idxmax(), 'final_recall_mean']:.3f}"),
         ("Exp04 neural_score",   "Final recall@budget",    f"{e4.loc[e4['final_recall'].idxmax(), 'final_recall']:.3f}"),
         ("Exp05 pair rank",      "Enrichment fold @ best K", f"{e5['enrichment_fold'].max():.2f}x"),
-        ("Exp06 PU Bagging",     "AUROC vs standard RF",   f"{pu['final_auroc_mean']:.3f} vs {rf['final_auroc_mean']:.3f}"),
+        ("Exp06 PU Bagging",     "AP vs standard RF",      f"{pu['final_ap_mean']:.3f} vs {rf['final_ap_mean']:.3f}"),
     ]
     header = f"{'Experiment':<28} {'Metric':<28} {'Value'}"
     print(header)

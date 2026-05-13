@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 # -- Configuration -------------------------------------------------------------
@@ -240,12 +240,14 @@ def run_trial(
 
     test_idx = np.concatenate([test_pos, test_neg])
     labeled_idx = np.concatenate([seed_pos, seed_neg])
-    pool_idx = np.concatenate([pool_neg])  # remaining negatives; positives enter via oracle
 
-    # Positives not yet revealed (oracle will reveal them when selected, or they stay hidden)
+    # Hidden positives join the queryable pool — the oracle reveals their label when queried.
+    # Previously they were sequestered, making every query a negative and recall never improve.
     hidden_pos = pos_idx[N_SEED_POSITIVES + N_TEST_POSITIVES:]
+    pool_idx = np.concatenate([pool_neg, hidden_pos])
+    n_total_hidden = len(hidden_pos)
 
-    auroc_curve: list[float] = []
+    ap_curve: list[float] = []
     recall_curve: list[float] = []
 
     for _round in range(N_ROUNDS + 1):
@@ -259,31 +261,26 @@ def run_trial(
                 committee = make_committee()
                 for m in committee:
                     m.fit(X[labeled_idx], y[labeled_idx])
-                model = committee[0]  # LR (C=1) used for AUROC eval
+                model = committee[0]  # LR (C=1) used for eval
             else:
                 model.fit(X[labeled_idx], y[labeled_idx])
 
-        # Eval
+        # Eval — AP is primary (meaningful at 0.29% imbalance)
         if not has_both:
-            auroc_curve.append(0.5)
+            ap_curve.append(0.0)
             recall_curve.append(0.0)
         else:
             y_prob = model.predict_proba(X[test_idx])[:, -1]
-            auroc_curve.append(float(roc_auc_score(y[test_idx], y_prob)))
+            ap_curve.append(float(average_precision_score(y[test_idx], y_prob)))
 
-            unlab_idx = np.concatenate([pool_idx, hidden_pos])
-            if len(unlab_idx) > 0:
-                scores = model.predict_proba(X[unlab_idx])[:, -1]
-                top_k = np.argsort(scores)[::-1][: min(TOP_K, len(unlab_idx))]
-                n_pos_found = int(y[unlab_idx[top_k]].sum())
-                recall_curve.append(n_pos_found / max(1, len(hidden_pos) + N_TEST_POSITIVES - len(test_pos)))
-            else:
-                recall_curve.append(0.0)
+            # Recall: how many of the originally-hidden positives have been labeled?
+            n_discovered = int(y[labeled_idx].sum()) - N_SEED_POSITIVES
+            recall_curve.append(n_discovered / max(1, n_total_hidden))
 
         if _round == N_ROUNDS:
             break
 
-        # Acquire
+        # Acquire — oracle reveals true label (positive or negative) for chosen genes
         if not has_both or strategy == "random":
             chosen = acquire_random(pool_idx, k=QUERY_SIZE, rng=rng)
         elif strategy == "uncertainty":
@@ -294,23 +291,23 @@ def run_trial(
         labeled_idx = np.concatenate([labeled_idx, chosen])
         pool_idx = np.setdiff1d(pool_idx, chosen)
 
-    return {"auroc": auroc_curve, "recall_top_k": recall_curve}
+    return {"ap": ap_curve, "recall_top_k": recall_curve}
 
 
 def run_strategy(gene_df: pd.DataFrame, feat_cols: list[str], strategy: str) -> dict:
     print(f"  [{strategy}] running {N_TRIALS} trials ...")
-    all_auroc, all_recall = [], []
+    all_ap, all_recall = [], []
     for t in range(N_TRIALS):
         rng = np.random.default_rng(RANDOM_STATE + t)
         trial = run_trial(gene_df, feat_cols, strategy, rng)
-        all_auroc.append(trial["auroc"])
+        all_ap.append(trial["ap"])
         all_recall.append(trial["recall_top_k"])
 
-    auroc = np.array(all_auroc)
+    ap = np.array(all_ap)
     recall = np.array(all_recall)
     return {
-        "auroc_mean": auroc.mean(0),
-        "auroc_std": auroc.std(0),
+        "ap_mean": ap.mean(0),
+        "ap_std": ap.std(0),
         "recall_mean": recall.mean(0),
         "recall_std": recall.std(0),
     }
@@ -332,11 +329,11 @@ def plot_curves(results: dict[str, dict]) -> None:
 
     for strategy, res in results.items():
         c = colors.get(strategy, "orange")
-        axes[0].plot(labeled_counts, res["auroc_mean"], label=strategy, color=c, lw=2)
+        axes[0].plot(labeled_counts, res["ap_mean"], label=strategy, color=c, lw=2)
         axes[0].fill_between(
             labeled_counts,
-            res["auroc_mean"] - res["auroc_std"],
-            res["auroc_mean"] + res["auroc_std"],
+            res["ap_mean"] - res["ap_std"],
+            res["ap_mean"] + res["ap_std"],
             alpha=0.2, color=c,
         )
         axes[1].plot(labeled_counts, res["recall_mean"], label=strategy, color=c, lw=2)
@@ -347,11 +344,11 @@ def plot_curves(results: dict[str, dict]) -> None:
             alpha=0.2, color=c,
         )
 
-    axes[0].set_title("AUROC on held-out test set")
+    axes[0].set_title("Average Precision on held-out test set\n(primary metric at 0.29% class imbalance)")
     axes[0].set_xlabel("Labeled genes (budget spent)")
-    axes[0].set_ylabel("AUROC")
+    axes[0].set_ylabel("Average Precision")
     axes[0].legend()
-    axes[0].set_ylim(0.4, 1.0)
+    axes[0].set_ylim(0.0, 1.0)
 
     axes[1].set_title(f"Neural-gene recall in top-{TOP_K} model ranking")
     axes[1].set_xlabel("Labeled genes (budget spent)")
@@ -395,11 +392,11 @@ def main() -> None:
     for strategy, res in results.items():
         summary_rows.append({
             "strategy": strategy,
-            "final_auroc_mean": res["auroc_mean"][-1],
-            "final_auroc_std": res["auroc_std"][-1],
+            "final_ap_mean": res["ap_mean"][-1],
+            "final_ap_std": res["ap_std"][-1],
             "final_recall_mean": res["recall_mean"][-1],
             "final_recall_std": res["recall_std"][-1],
-            "auc_learning_curve": float(np.trapezoid(res["auroc_mean"])),
+            "auc_ap_curve": float(np.trapezoid(res["ap_mean"])),
         })
     summary = pd.DataFrame(summary_rows)
     summary.to_csv(RESULTS_DIR / "summary.csv", index=False)
