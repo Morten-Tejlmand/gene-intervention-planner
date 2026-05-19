@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import torch; from transformers import EsmModel, EsmTokenizer; print\\('torch', torch.__version__\\); print\\('transformers ok'\\)\")",
+      "Bash(python src/gene_intervention_planner/data/07_kmer_features.py)",
+      "Bash(python src/gene_intervention_planner/data/06_esm2_features.py)",
+      "Bash(python -c ' *)",
+      "Bash(timeout 60 python -c ' *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(echo \"ESM-2 started in background PID: $!\")",
+      "Bash(python experiments/exp09_feature_embedding_comparison.py)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/processed/go_features.csv', nrows=2\\); print\\(df.columns.tolist\\(\\)[:5]\\); print\\(df.dtypes[:3]\\)\")",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/processed/esm2_embeddings.csv', nrows=2\\); print\\(df.columns.tolist\\(\\)[:5]\\)\")",
+      "Bash(Get-Content \"C:\\\\Users\\\\morte\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-morte-OneDrive-Desktop-github-gene-intervention-planner\\\\eb74ced7-dc09-4deb-9f93-f088fe6f3db5\\\\tasks\\\\bkxe3s4je.output\" -Raw)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\morte\\\\OneDrive\\\\Desktop\\\\github\\\\gene-intervention-planner\\\\experiments\\\\behavioural_al\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\morte\\\\OneDrive\\\\Desktop\\\\github\\\\gene-intervention-planner\\\\artifacts\\\\behavioural_al\")",
+      "Bash(python experiments/behavioural_al/run_experiment.py)",
+      "PowerShell(cd \"c:\\\\Users\\\\morte\\\\OneDrive\\\\Desktop\\\\github\\\\gene-intervention-planner\"; $env:PYTHONUNBUFFERED=\"1\"; python experiments/behavioural_al/run_experiment.py 2>&1)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\morte\\\\OneDrive\\\\Desktop\\\\github\\\\gene-intervention-planner\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(python experiments/behavioural_al/build_neural_target.py)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\morte\\\\OneDrive\\\\Desktop\\\\github\\\\gene-intervention-planner\\\\experiments\\\\\" -Recurse -Force | Select-Object FullName, PSIsContainer | Sort-Object FullName)",
+      "Bash(python experiments/generate_all_summaries.py)",
+      "Bash(python experiments/active_learning_phenotype/plot_summary.py)",
+      "Bash(Move-Item 'artifacts\\\\active_learning_phenotype\\\\01_baseline_summary.csv' 'artifacts\\\\active_learning_phenotype\\\\al_pheno_01_baseline\" -Force *)",
+      "Bash(Get-ChildItem \"artifacts\\\\active_learning_phenotype\\\\02_curves_*.csv\")",
+      "Bash(Move-Item -Destination 'artifacts\\\\active_learning_phenotype\\\\al_pheno_02_al_vs_random\" -Force *)",
+      "Bash(python -)",
+      "Bash(python run_all_experiments.py)",
+      "Bash(python -u experiments/exp01_baseline_neural_relevance.py)",
+      "Bash(taskkill /F /IM python.exe /T)",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)",
+      "Bash(git checkout *)"
+    ]
+  }
+}
