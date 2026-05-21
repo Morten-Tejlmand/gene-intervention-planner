@@ -28,7 +28,7 @@ def extract_universal_features(fasta_path):
 
             features = {
                 "sequence_id": record.id,
-                "common_name": common_name,  # <--- IT IS NOW SAVED HERE
+                "common_name": common_name,
                 "length": len(clean_seq),
                 "molecular_weight": analysed_seq.molecular_weight(),
                 "aromaticity": analysed_seq.aromaticity(),
