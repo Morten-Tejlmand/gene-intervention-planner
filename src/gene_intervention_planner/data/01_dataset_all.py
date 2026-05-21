@@ -1,12 +1,19 @@
 import re
+from pathlib import Path
 
 import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils.ProtParam import ProteinAnalysis
 
+path_for_processed_data = "data/processed/"
+path_for_processed_data = Path(path_for_processed_data)  # type: ignore
+
 
 def extract_universal_features(fasta_path):
     protein_data = []
+    if not path_for_processed_data.exists():
+        path_for_processed_data.mkdir(parents=True, exist_ok=True)
+
     print(f"--- Processing: {fasta_path} ---")
 
     for record in SeqIO.parse(fasta_path, "fasta"):

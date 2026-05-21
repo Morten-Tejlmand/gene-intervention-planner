@@ -1,6 +1,5 @@
 """
-Step 8 — Gene Ontology (GO) Term Features
-===========================================
+
 Downloads the WormBase C. elegans GO annotation GAF from the Gene Ontology
 Consortium (wb.gaf.gz), builds a gene × GO-term multi-hot matrix, then
 compresses to N_COMPONENTS dense features via TruncatedSVD.
@@ -9,17 +8,11 @@ GO terms span three namespaces:
   BP — Biological Process
   MF — Molecular Function
   CC — Cellular Component
-
-Only positive (non-NOT) annotations are used.  GO terms annotating fewer
-than MIN_GENE_COUNT genes are discarded to reduce noise.
-
-Run from project root:
-    python src/gene_intervention_planner/data/08_go_features.py
 """
+
 from __future__ import annotations
 
 import gzip
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -36,10 +29,23 @@ N_COMPONENTS = 64
 MIN_GENE_COUNT = 5
 
 _GAF_COLS = [
-    "db", "gene_id", "gene_symbol", "qualifier", "go_id",
-    "reference", "evidence_code", "with_from", "aspect",
-    "db_object_name", "db_object_synonym", "db_object_type",
-    "taxon", "date", "assigned_by", "annotation_extension", "gene_product_form",
+    "db",
+    "gene_id",
+    "gene_symbol",
+    "qualifier",
+    "go_id",
+    "reference",
+    "evidence_code",
+    "with_from",
+    "aspect",
+    "db_object_name",
+    "db_object_synonym",
+    "db_object_type",
+    "taxon",
+    "date",
+    "assigned_by",
+    "annotation_extension",
+    "gene_product_form",
 ]
 
 
