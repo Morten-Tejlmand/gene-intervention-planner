@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 STEPS = [
+    "src/gene_intervention_planner/data/wormbase_data.py",
     "src/gene_intervention_planner/data/01_dataset_all.py",
     "src/gene_intervention_planner/data/02_label_genes.py",
     "src/gene_intervention_planner/data/03_ortholog_mapper.py",

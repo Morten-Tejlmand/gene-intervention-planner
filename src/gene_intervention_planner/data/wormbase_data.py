@@ -485,3 +485,8 @@ def download_and_preprocess_wormbase(
         comparator_genes=comparator_genes,
         max_context_genes=max_context_genes,
     )
+
+
+print("downloading and preprocessing WormBase data...")
+download_and_preprocess_wormbase()
+print("finished fr")
