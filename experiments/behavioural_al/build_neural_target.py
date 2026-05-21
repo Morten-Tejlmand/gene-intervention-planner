@@ -317,6 +317,22 @@ def build_target(gaf_path: Path = GAF_PATH) -> pd.DataFrame:
         .reset_index()
         .rename(columns={"gene_id": "common_name"})
     )
+    agg["confirmed_negative"] = False
+
+    # Confirmed negatives: genes with a NOT-qualified annotation to one of the 230
+    # neural phenotype IDs.  A lab explicitly tested the gene for a neural behaviour
+    # phenotype and published "no effect" — the only reliable source of true negatives.
+    not_neural_genes = set(
+        gaf[gaf["is_not"] & gaf["pheno_id"].isin(NEURAL_BEHAVIOUR_IDS)]["gene_id"].unique()
+    ) - set(agg["common_name"])   # exclude any gene that also has a positive annotation
+    if not_neural_genes:
+        neg_df = pd.DataFrame({
+            "common_name": sorted(not_neural_genes),
+            "neural_behaviour_count": 0,
+            "neural_behaviour_ids": "",
+            "confirmed_negative": True,
+        })
+        agg = pd.concat([agg, neg_df], ignore_index=True)
 
     return agg
 
@@ -328,22 +344,22 @@ def main() -> None:
 
     target_df = build_target()
 
-    # Report
-    n_genes = len(target_df)
-    counts  = target_df["neural_behaviour_count"]
-    print(f"\n  Genes with >=1 neural-behavioural annotation: {n_genes:,}")
-    print(f"  mean={counts.mean():.2f}  median={counts.median():.0f}  "
-          f"max={counts.max():.0f}")
-    print(f"\n  Top 10 genes by neural_behaviour_count:")
-    top = target_df.nlargest(10, "neural_behaviour_count")[
+    positives        = target_df[~target_df["confirmed_negative"]]
+    confirmed_negs   = target_df[target_df["confirmed_negative"]]
+    counts           = positives["neural_behaviour_count"]
+
+    print(f"\n  Positives  (>=1 neural annotation) : {len(positives):,}")
+    print(f"  Confirmed negatives (in GAF, 0 neural annotations): {len(confirmed_negs):,}")
+    print(f"  mean={counts.mean():.2f}  median={counts.median():.0f}  max={counts.max():.0f}")
+    print("\n  Top 10 genes by neural_behaviour_count:")
+    top = positives.nlargest(10, "neural_behaviour_count")[
         ["common_name", "neural_behaviour_count"]
     ]
     print(top.to_string(index=False))
 
     target_df.to_csv(OUT_PATH, index=False)
     print(f"\n  Saved -> {OUT_PATH}")
-    print(f"  (Genes with 0 neural-behavioural annotations are absent — "
-          f"treat missing rows as count=0)")
+    print("  (Genes absent from this file were never annotated in WormBase — treat as unlabeled)")
 
 
 if __name__ == "__main__":

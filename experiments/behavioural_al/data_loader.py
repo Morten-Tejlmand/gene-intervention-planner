@@ -76,9 +76,13 @@ def load_gene_level_data(target_col="unique_pheno_count", include_esm2=True, inc
                 f"Neural target not found: {NEURAL_TARGET_PATH}\n"
                 "Run build_neural_target.py first"
             )
-        neural_df = pd.read_csv(NEURAL_TARGET_PATH)[["common_name", "neural_behaviour_count"]]
+        neural_df = pd.read_csv(NEURAL_TARGET_PATH)[["common_name", "neural_behaviour_count", "confirmed_negative"]]
         gene_df = gene_df.merge(neural_df, on="common_name", how="left")
         gene_df["neural_behaviour_count"] = gene_df["neural_behaviour_count"].fillna(0.0)
+        # confirmed_negative=True  → studied, no neural annotation (reliable 0)
+        # confirmed_negative=False → positive gene
+        # confirmed_negative=NaN  → never appeared in WormBase (unlabeled)
+        gene_df["confirmed_negative"] = gene_df["confirmed_negative"].fillna("unlabeled")
     elif target_col not in gene_df.columns:
         available = [c for c in ANNOTATION_COLS if c in gene_df.columns]
         raise ValueError(f"Target column '{target_col}' not found. Available: {available}")
